@@ -1,0 +1,210 @@
+ARG PHP_VERSION=7.2
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY=""
+
+FROM php:${PHP_VERSION}-apache
+MAINTAINER ahsan habib <habib.cst@gmail.com>
+
+ARG APPLICATION_TIMEZONE="Asia/Dhaka"
+ARG REDIS_VERSION=4.0.2
+ARG GID=1000
+ARG UID=1000
+ARG BUILD_MODE="prod"
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV HTTP_PROXY="${HTTP_PROXY}" \
+    HTTPS_PROXY="${HTTPS_PROXY}" \
+    NO_PROXY="${NO_PROXY}"
+
+ENV BUILD_MODE="${BUILD_MODE}"
+ENV COMPOSER_HOME=/var/www/.composer
+ENV COMPOSER_VERSION=1.10.16
+
+# Install Application Dependencies
+RUN if [ ! -z "${HTTP_PROXY}" ]; then \
+            echo "Acquire::http::Proxy \"${HTTP_PROXY}\";" > /etc/apt/apt.conf.d/01proxy \
+            && echo "Acquire::https::Proxy \"${HTTP_PROXY}\";" >> /etc/apt/apt.conf.d/01proxy \
+            && echo "Acquire::ftp::Proxy \"${HTTP_PROXY}\";" >> /etc/apt/apt.conf.d/01proxy \
+        ;fi \
+    && echo "${APPLICATION_TIMEZONE}" > /etc/timezone \
+    && rm /etc/localtime \
+    && dpkg-reconfigure -f noninteractive tzdata \
+    && apt-get update -y \
+    && apt-get install -y --no-install-recommends gnupg gnupg1 gnupg2 \
+    && apt-get update -y \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        zip \
+        ca-certificates \
+        unzip \
+        vim \
+        libldap2-dev \
+        gettext \
+        libz-dev \
+        libpq-dev \
+        libssl-dev \
+        libzip-dev \
+        zlib1g-dev \
+        libicu-dev \
+        supervisor \
+        openssl \
+        libfreetype6-dev \
+        libjpeg62-turbo-dev \
+        libpng-dev \
+	ssl-cert \
+    && curl -L -o /tmp/redis.tar.gz https://github.com/phpredis/phpredis/archive/${REDIS_VERSION}.tar.gz \
+    && tar xfz /tmp/redis.tar.gz \
+    && rm -r /tmp/redis.tar.gz \
+    && mkdir -p /usr/src/php/ext \
+    && mv phpredis-* /usr/src/php/ext/redis \
+    && a2enmod rewrite ssl \
+    && apt-get -y autoremove \
+    && apt-get clean \
+    && if [ ! -z "${HTTP_PROXY}" ]; then \
+            pear config-set http_proxy "${HTTP_PROXY}" \
+        ;fi \
+    && docker-php-ext-configure intl \
+    && docker-php-ext-install pdo_mysql mbstring zip exif pcntl intl \
+    && docker-php-ext-configure ldap --with-libdir=lib/x86_64-linux-gnu \
+    && docker-php-ext-install redis \
+    && docker-php-ext-install sockets \
+    && docker-php-ext-install ldap \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && if [ "${BUILD_MODE}" = "dev" ]; then \
+        # Install the xdebug extension
+        pecl install xdebug \
+        && docker-php-ext-enable xdebug \
+    ;fi \
+    && . ~/.bashrc
+
+RUN curl -L -o /usr/local/bin/composer https://github.com/composer/composer/releases/download/${COMPOSER_VERSION}/composer.phar \
+    && mkdir -p ${COMPOSER_HOME} \
+    && mkdir /run/php \
+    && chown -R www-data:www-data ${COMPOSER_HOME} /run/php \
+    && chmod -R ugo+w ${COMPOSER_HOME} \
+    && chmod -R g+s ${COMPOSER_HOME} \
+    && chmod ugo+x /usr/local/bin/composer \
+    && composer --version \
+    && composer global require --no-interaction hirak/prestissimo
+
+
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y git
+
+# install dependencies
+RUN apt-get update && apt-get install -y \
+    ssh \
+    libssh2-1 \
+    libssh2-1-dev \
+    wget \
+    libssl-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# Setup PHP INI
+ENV PHP_INI_OUTPUT_BUFFERING="4096" \
+    PHP_INI_ZLIB_OUTPUT_COMPRESSION="Off" \
+    PHP_INI_EXPOSE_PHP="Off" \
+    PHP_INI_MAX_EXECUTION_TIME="300" \
+    PHP_INI_MAX_INPUT_TIME="300" \
+    PHP_INI_MAX_INPUT_VARS="10000" \
+    PHP_INI_MEMORY_LIMIT="2048M" \
+    PHP_INI_ERROR_REPORTING=32767 \
+    PHP_INI_DISPLAY_ERRORS="Off" \
+    PHP_INI_DISPLAY_STARTUP_ERRORS="Off" \
+    PHP_INI_ERROR_LOG="/var/www/html/storage/logs/php_errors.log" \
+    PHP_INI_LOG_ERRORS="On" \
+    PHP_INI_LOG_ERRORS_MAX_LEN="1024" \
+    PHP_INI_POST_MAX_SIZE="4096M" \
+    PHP_INI_FILE_UPLOADS="On" \
+    PHP_INI_UPLOAD_MAX_FILESIZE="256M" \
+    PHP_INI_MAX_FILE_UPLOADS="40" \
+    PHP_INI_ALLOW_URL_FOPEN="On" \
+    PHP_INI_DATE_TIMEZONE="${APPLICATION_TIMEZONE}" \
+    PHP_INI_SESSION_SAVE_HANDLER="files" \
+    PHP_INI_SESSION_SAVE_PATH="/tmp" \
+    PHP_INI_SESSION_USE_STRICT_MODE="0" \
+    PHP_INI_SESSION_USE_COOKIES="1" \
+    PHP_INI_SESSION_USE_ONLY_COOKIES="1" \
+    PHP_INI_SESSION_NAME="APP_SSID" \
+    PHP_INI_SESSION_COOKIE_SECURE="On" \
+    PHP_INI_SESSION_COOKIE_LIFETIME="0" \
+    PHP_INI_SESSION_COOKIE_PATH="/" \
+    PHP_INI_SESSION_COOKIE_DOMAIN="" \
+    PHP_INI_SESSION_COOKIE_HTTPONLY="On" \
+    PHP_INI_SESSION_COOKIE_SAMESITE="" \
+    PHP_INI_SESSION_UPLOAD_PROGRESS_NAME="APP_UPLOAD_PROGRESS" \
+    PHP_INI_OPCACHE_ENABLE="1" \
+    PHP_INI_OPCACHE_ENABLE_CLI="0" \
+    PHP_INI_OPCACHE_MEMORY_CONSUMPTION="256" \
+    PHP_INI_OPCACHE_INTERNED_STRINGS_BUFFER="16" \
+    PHP_INI_OPCACHE_MAX_ACCELERATED_FILES="100000" \
+    PHP_INI_OPCACHE_MAX_WASTED_PERCENTAGE="25" \
+    PHP_INI_OPCACHE_USE_CWD="0" \
+    PHP_INI_OPCACHE_VALIDATE_TIMESTAMPS="0" \
+    PHP_INI_OPCACHE_REVALIDATE_FREQ="0" \
+    PHP_INI_OPCACHE_SAVE_COMMENTS="0" \
+    PHP_INI_OPCACHE_ENABLE_FILE_OVERRIDE="1" \
+    PHP_INI_OPCACHE_MAX_FILE_SIZE="0" \
+    PHP_INI_OPCACHE_FAST_SHUTDOWN="1"
+
+# create user and group for application
+RUN groupadd --gid ${GID} www && \
+    useradd --uid ${UID} --create-home --home-dir /home/www --system --comment "Container User" --shell /bin/bash --gid www www
+
+WORKDIR /var/www/html/
+COPY ./docker/php.ini /usr/local/etc/php/
+COPY --chown=www-data:www-data ./src/composer.* /var/www/html/
+
+RUN composerInstallArgs="--ignore-platform-reqs --no-interaction --no-scripts --no-autoloader --prefer-dist" \
+    && export composerInstallArgs \
+    && if [ "${BUILD_MODE}" = "prod" ]; then \
+        composerInstallArgs="${composerInstallArgs} --no-dev" \
+        && export composerInstallArgs \
+    ;fi \
+    && composer install $composerInstallArgs
+
+COPY --chown=www-data:www-data ./src .
+COPY --chown=www-data:www-data ./src/config/app.default.php /var/www/html/config/app.php
+RUN mkdir -p /var/www/html/tmp/
+RUN mkdir -p /var/www/html/logs/
+RUN mkdir -p /var/www/html/webroot/img/documents/
+RUN touch /var/www/html/logs/error.log
+RUN touch /var/www/html/logs/debug.log
+RUN touch /var/www/html/logs/info.log
+RUN chmod -R 777 /var/www/html/tmp/
+RUN chmod -R 777 /var/www/html/logs/
+RUN chmod -R 777 /var/www/html/tasks/
+RUN chmod -R 777 /var/www/html/webroot/img/documents/
+
+RUN mkdir -p /run/php \
+    && chown -R www-data:www-data /run/php /var/www/html \
+    && composerDumpAutoloadArgs="-o" \
+    && export composerDumpAutoloadArgs \
+    && if [ "${BUILD_MODE}" = "prod" ]; then \
+        composerDumpAutoloadArgs="$composerDumpAutoloadArgs --classmap-authoritative" \
+        && export composerDumpAutoloadArgs \
+    ;fi \
+    && composer dump-autoload $composerDumpAutoloadArgs
+
+RUN if [ ! -f /etc/ssl/certs/default.crt ]; then \
+        openssl genrsa -out "/etc/ssl/certs/default.key" 4096 \
+        && openssl req -new -key "/etc/ssl/certs/default.key" -out "/etc/ssl/certs/default.csr" -subj "/CN=default/O=default/C=UK" \
+        && openssl x509 -req -days 3072 -in "/etc/ssl/certs/default.csr" -signkey "/etc/ssl/certs/default.key" -out "/etc/ssl/certs/default.crt" \
+    ;fi
+
+#RUN a2enmod rewrite
+
+COPY ./docker/000-default.conf /etc/apache2/sites-available/000-default.conf
+COPY ./docker/entrypoint.sh /entrypoint.sh
+COPY ./docker/supervisor/supervisord.conf /etc/supervisor/
+COPY ./docker/supervisor/conf.d/* /etc/supervisor/conf.d/
+
+EXPOSE 80 443
+CMD ["/usr/sbin/apache2ctl", "-D", "FOREGROUND"]
